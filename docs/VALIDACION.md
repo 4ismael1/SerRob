@@ -1,4 +1,16 @@
-# Validación del MVP — 15 de septiembre de 2026
+# Validación — 15 de septiembre de 2026
+
+## Ampliación avanzada
+
+- 44 pruebas automatizadas aprobadas en Python 3.12.10 / Windows, incluyendo los casos anteriores.
+- Casos añadidos: ranking con historial frente a cero aislado, abstención por huecos o crecimiento, reinicio de evidencia en eventos, vigencia sin prolongación por continuidad del TOP, migración aditiva de SQLite, medición prospectiva con desconocidos, reportes ligados a usuario/Discord, recuperación gradual de cuota, exploración y caducidad de pistas de cursores, cambio a precisión durante selección, coherencia entre botones y resultados y replay causal con llenado/ausencias.
+- Prueba pública con Steal An Egg: primera ronda 200 instancias, segunda 15 con dos IDs repetidos, tercera detenida ante 429. Solo dos instantáneas: insuficientes para medir una tasa de éxito o mejora.
+- Replay de esas instantáneas: cero resultados resueltos del TOP en la ventana posterior; rápido/equilibrado diez pendientes y precisión dos. No se interpretan como éxitos.
+- No se ha probado una entrada real en el cliente Roblox ni el despliegue en el Pterodactyl del usuario.
+
+Los 31 tests originales también pasaron en CI Linux Python 3.12 y 3.13 en el commit inicial. Las ejecuciones CI de la revisión avanzada se pueden comprobar en Actions; no deben confundirse con una prueba de alojamiento o de Discord real.
+
+La [investigación](INVESTIGACION.md) detalla fuentes, método y limitaciones. Los apartados siguientes conservan la evidencia de la versión inicial.
 
 ## Comprobado
 

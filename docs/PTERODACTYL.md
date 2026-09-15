@@ -118,3 +118,10 @@ Si el enlace heredado no funciona en tus dispositivos, configura `JOIN_MODE=game
 - Si un panel queda roto, restablece permisos y usa `/panel reparar`; no se recrea automáticamente en bucle.
 
 No se ha conectado este proyecto a tu cuenta de Pterodactyl ni a Discord durante su desarrollo: necesitas configurar tu token y subir el paquete.
+# Actualizar a la versión avanzada
+
+Detén el bot y realiza una copia de seguridad consistente. Si tu instalación usa Git, actualiza desde `main` de SerRob mediante la opción de actualización de tu egg o `git pull --ff-only`. Si subiste archivos, reemplaza el código con el paquete nuevo conservando **`.env` y `data/`**. Reinstala `requirements.txt` si el egg no lo hace y arranca de nuevo. No subas `.research/` ni `.validation-runtime/`.
+
+La migración SQLite de v1 a v2 es automática y conserva los paneles. El arranque vuelve a registrar comandos; `/panel perfil` añade selección de algoritmo por juego. Los comandos globales pueden tardar en aparecer en Discord. No borres la base para actualizar.
+
+Configuración inicial: máximo 1 jugador, intervalo 10 s, vigencia 15 s, dos páginas y perfil equilibrado. `JOIN_MODE=legacy` muestra enlaces por instancia. Elige precisión si aceptas menos resultados a cambio de exigir confirmación. El host comparte límites de red: no ejecutes una captura de auditoría junto al bot sobre la misma IP. Consulta [la investigación y medición](INVESTIGACION.md).

@@ -127,7 +127,7 @@ def test_scan_stops_early_and_never_refreshes_absent_ids(tmp_path):
     async def scenario():
         store = Store(str(tmp_path / "scan.db"))
         await store.initialize()
-        p = panel()
+        p = panel(profile="rapido")
         await store.save(p)
         now = time.time()
         observations = [Observation(job(i), 1, 20, now) for i in range(1, 6)]

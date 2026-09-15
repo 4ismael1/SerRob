@@ -6,4 +6,5 @@ __pycache__/
 data/
 dist/
 .validation-runtime/
+.research/
 *.log

@@ -9,6 +9,7 @@ Bot en **Python 3.12+** preparado para Pterodactyl. Un panel independiente por j
 /panel crear juego:https://www.roblox.com/games/920587237/Adopt-Me canal:#adopt-me
 /panel listar
 /panel configurar panel:ID max_jugadores:1 intervalo:10 vigencia:15 paginas:2
+/panel perfil panel:ID modo:equilibrado
 /panel pausa panel:ID pausado:true
 /panel pausa panel:ID pausado:false
 /panel reparar panel:ID canal:#nuevo-canal
@@ -24,10 +25,10 @@ Los administradores necesitan **Gestionar servidor**. Los usuarios que ven el ca
 
 1. Recibes la notificación del otro bot.
 2. Abres el canal del juego.
-3. Pulsa **Buscar mejor ahora** para pedir la mejor opción reciente que cumpla el filtro, o selecciona una instancia concreta por su conteo y JobId.
+3. Cada resultado incluye **Entrar a esta instancia** y un botón directo con su ID abreviado. Para comprobarlo antes, pulsa **Buscar mejor ahora** o selecciona una instancia concreta. Los enlaces directos no revalidan al pulsarlos; los pasos siguientes corresponden a la comprobación.
 4. Si el último dato tiene más de 5 segundos, el bot intenta reobservar esa misma instancia durante un máximo de 12 segundos.
 5. Solo prepara el enlace si el dato tiene como máximo 5 segundos y sigue cumpliendo el filtro actual. Nunca sustituye silenciosamente el JobId elegido manualmente. **Buscar mejor ahora** sí permite elegir explícitamente una alternativa nueva. La entrega de Discord también puede tardar: comprueba siempre la fecha mostrada.
-6. La respuesta es privada para ti. Se intenta retirar su botón al cumplirse 10 segundos desde la observación. Si el bot se desconecta, Discord puede conservar el mensaje: un enlace visible no garantiza vigencia.
+6. La respuesta es privada para ti. Se intenta retirar su enlace al cumplirse 10 segundos desde la observación. Quedan botones durante cinco minutos para reportar cuántos jugadores adicionales había o si no pudiste entrar. Si el bot se desconecta, Discord puede conservar el mensaje: un enlace visible no garantiza vigencia.
 
 **Roblox controla la ocupación y el acceso.** Incluso un dato recién consultado puede estar cacheado por Roblox o cambiar antes de entrar. Los cero jugadores se muestran como observaciones inciertas, no como plazas garantizadas.
 
@@ -91,19 +92,23 @@ Configurar 5 segundos en varios juegos **no garantiza** una consulta cada 5 segu
 
 - Consulta páginas ascendentes con `excludeFullGames=true`, hasta 100 entradas por página.
 - Cada Place tiene un trabajo independiente; paneles del mismo Place en distintos Discord comparten consultas.
-- Detiene el recorrido al conseguir cinco candidatos para cada filtro, al acabar páginas, ante cursores repetidos o tras 20 segundos.
+- Combina exploración progresiva y reobservación dirigida mediante pistas de cursores de corta duración. Mantiene hasta 50 referencias prioritarias por juego.
+- Detiene el recorrido según la evidencia obtenida, al acabar páginas, ante cursores repetidos o tras 20 segundos. Cinco resultados provisionales no detienen la exploración del perfil equilibrado.
 - Reobserva candidatos únicamente cuando vuelven a aparecer en una respuesta. Una ausencia no significa cero jugadores ni cierre.
 - Excluye cada dato al superar la vigencia configurada. Al pulsar comprueba además el límite de 5 segundos.
-- Historial como desempate, después de la ocupación. La etiqueta de baja población requiere varias muestras y se reinicia tras huecos mayores de 30 segundos; no implica población continua conocida.
+- Ranking por frescura, historial, cobertura, tendencia de crecimiento y picos de llenado. Un cero aislado puede quedar por debajo de un servidor con una persona reobservado. Calidad 0–100 es una puntuación heurística, no una probabilidad.
+- Perfiles independientes por panel: equilibrado, precisión, evento y rápido. Precisión exige reobservación y vigencia máxima de diez segundos; evento exige evidencia posterior a activarlo y máximo ocho segundos.
 - Persistencia de paneles e historial. Tras reiniciar, ningún dato guardado se ofrece como recomendación actual hasta reobservarlo.
 - El filtro de 0–1 nunca se amplía automáticamente. Si no hay resultados, el panel lo dice.
 - Cola acotada por juegos activos, dos peticiones HTTP simultáneas como máximo, sin ráfagas, backoff y `Retry-After` global.
+- Ante 429 reduce automáticamente el ritmo; lo recupera gradualmente sin superar el presupuesto configurado. La presión de llenado y el perfil evento ajustan el intervalo solicitado dentro de ese presupuesto.
+- Medición prospectiva del TOP a 10–30 segundos: aciertos, fallos y desconocidos separados. Botón **Calidad** con cobertura y reportes de entrada.
 - `401/403`: espera y explica la restricción, sin intentar cookies ni evasión.
 - Botones persistentes, comprobación de permisos al actuar y recuperación manual de mensajes borrados.
 
 ## Historial y copias de seguridad
 
-SQLite guarda el detalle durante 48 horas y elimina referencias no vistas durante 7 días. La limpieza se hace en lotes de 5000 filas por minuto; bajo grandes acumulaciones puede tardar varios ciclos. La base reutiliza páginas libres, no se reduce en disco automáticamente. No hay downsampling ni predicción en este MVP.
+SQLite guarda detalle de cambios y al menos una muestra por minuto durante 48 horas. Además conserva hasta 120 muestras recientes por instancia en un resumen móvil de treinta minutos. Elimina referencias no vistas y mediciones con más de siete días. La limpieza de observaciones y referencias se hace en lotes de 5000 filas por minuto; bajo grandes acumulaciones puede tardar varios ciclos. La base reutiliza páginas libres, no se reduce en disco automáticamente. La migración desde v1 conserva paneles e historial.
 
 Utiliza las copias de Pterodactyl con el bot detenido, o la API `sqlite3.Connection.backup()` para una copia consistente en caliente. No copies únicamente el archivo principal mientras haya escrituras WAL. Nunca incluyas `.env` en un ZIP público.
 
@@ -116,9 +121,19 @@ python -m pytest -q
 
 Incluyen caducidad individual, ocupación estricta, identidad del servidor seleccionado, cambios de configuración durante el flujo, persistencia sin falsa continuidad, cursores repetidos, límites globales, HTTP simulado local, aislamiento entre Discord y serialización de comandos. No necesitan token ni hacen consultas a Roblox.
 
-## Alcance del MVP
+## Configuración inicial recomendada
 
-Incluye paneles multijuego, filtros independientes, escaneo, historial básico, entrada experimental, diagnóstico, persistencia y recuperación. No incluye detección automática de Admin Abuse, gráficas ni probabilidades predictivas. Para un evento puedes bajar el intervalo de ese panel desde **Configurar**, siempre sujeto al presupuesto.
+Para Steal An Egg empieza con `max_jugadores:1 intervalo:10 vigencia:15 paginas:2` y perfil **equilibrado**. Mantén `JOIN_MODE=legacy` para enlaces por servidor. Si quieres priorizar candidatos confirmados aunque el panel quede vacío, elige **precisión**. El perfil **evento** reinicia la evidencia y reduce la vigencia; se activa manualmente tras el aviso externo.
+
+El presupuesto global por defecto de 30/min no garantiza acceso: en una prueba real este juego devolvió 429 tras dos rondas. Evita aumentar peticiones ante un límite; el bot reduce el ritmo automáticamente. Varios juegos pueden requerir intervalos mayores.
+
+## Investigación y objetivo del 70 %
+
+Se inspeccionaron RoValra, BTRoblox y robloxserverfinder. Consulta la [investigación técnica, algoritmos, limitaciones y protocolo de medición](docs/INVESTIGACION.md). Incluye fuentes fijadas a commits y el resultado real con Steal An Egg.
+
+**No se ha demostrado todavía un 70 % de entradas con 0–1 jugadores.** El bot mide reobservaciones de la API y reportes voluntarios por separado. No convierte ausencias en éxitos ni usa su puntuación como porcentaje. No detecta automáticamente eventos del otro bot ni controla el matchmaking de Roblox.
+
+Puedes capturar datos públicos y comparar los perfiles con `tools/audit.py`; las instrucciones y los límites de esa evaluación están en la investigación.
 
 ## Referencias de compatibilidad
 

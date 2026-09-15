@@ -38,8 +38,16 @@ class Panel:
     state: str = "active"
     version: int = 1
     error: str = ""
+    profile: str = "equilibrado"
+    event_since: float = 0
+
+    @property
+    def ttl(self) -> int:
+        return min(self.freshness, 8 if self.profile == "evento" else 10) if self.profile in {"precision", "evento"} else self.freshness
 
     def validate(self):
+        if self.profile not in {"rapido", "equilibrado", "precision", "evento"}:
+            raise ValueError("Perfil desconocido.")
         for value, low, high, label in (
             (self.max_players, 0, 10, "Máximo de jugadores"),
             (self.interval, 5, 300, "Intervalo"),
@@ -68,9 +76,12 @@ class Candidate:
     low_since: float
     low_samples: int
     previous_playing: int | None = None
+    history: tuple[tuple[float, int], ...] = ()
 
     def eligible(self, panel: Panel, now: float) -> bool:
-        return (panel.state == "active" and 0 <= now - self.observed_at <= panel.freshness
+        ttl = panel.ttl
+        return (panel.state == "active" and 0 <= now - self.observed_at <= ttl
+                and (panel.profile != "evento" or self.observed_at >= panel.event_since)
                 and self.playing <= panel.max_players and self.playing < self.capacity)
 
     @property
@@ -79,9 +90,8 @@ class Candidate:
 
 
 def rank(candidates, panel: Panel, now: float) -> list[Candidate]:
-    # Occupancy always wins; history only breaks ties among sufficiently recent data.
-    return sorted((c for c in candidates if c.eligible(panel, now)),
-                  key=lambda c: (c.playing, -c.observed_at, not c.stable, c.first_seen, c.job_id))[:5]
+    from .analytics import ranked
+    return ranked(candidates, panel, now)
 
 
 def parse_page(payload: dict, observed_at: float) -> tuple[list[Observation], str | None]:

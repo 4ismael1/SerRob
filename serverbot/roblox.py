@@ -40,6 +40,9 @@ class RateGate:
 
     def __init__(self, rpm: int, clock=time.monotonic, sleep=asyncio.sleep):
         self.spacing = 60 / rpm
+        self.base_spacing = self.spacing
+        self.last_limit = -float("inf")
+        self.successes = 0
         self.clock, self.sleep = clock, sleep
         self.next_at = 0.0
         self.blocked_until = 0.0
@@ -47,6 +50,17 @@ class RateGate:
 
     def penalize(self, seconds: float):
         self.blocked_until = max(self.blocked_until, self.clock() + seconds)
+
+    def reduce_rate(self):
+        self.spacing = min(60, self.spacing * 2)
+        self.last_limit = self.clock()
+        self.successes = 0
+
+    def success(self):
+        self.successes += 1
+        if self.successes >= 20 and self.clock() - self.last_limit >= 120:
+            self.spacing = max(self.base_spacing, self.spacing * 0.9)
+            self.successes = 0
 
     async def acquire(self):
         async with self.lock:
@@ -90,6 +104,7 @@ class Roblox:
                     if response.status == 429:
                         self.failures += 1
                         self.rate_limits += 1
+                        self.gate.reduce_rate()
                         fallback = min(300, 5 * 2 ** min(self.failures, 6))
                         delay = retry_after(response.headers.get("Retry-After"), fallback) + random.uniform(0.1, 1)
                         self.gate.penalize(delay)
@@ -120,6 +135,12 @@ class Roblox:
                     if not isinstance(data, dict):
                         raise ProviderError("Formato de respuesta no compatible.", 120, "schema")
                     self.failures = 0
+                    self.gate.success()
+                    try:
+                        if int(response.headers.get("x-ratelimit-remaining", "-1")) == 0:
+                            self.gate.penalize(retry_after(response.headers.get("x-ratelimit-reset"), 30))
+                    except ValueError:
+                        pass
                     # Age denotes upstream cache age; don't label an old cache as fresh.
                     try:
                         age = float(response.headers.get("Age", "0"))

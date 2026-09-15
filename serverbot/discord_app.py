@@ -15,6 +15,7 @@ from .engine import Engine
 from .models import Candidate, Panel, join_url, parse_place
 from .roblox import ProviderError, Roblox
 from .storage import Store
+from .analytics import evidence, ranked
 
 log = logging.getLogger(__name__)
 
@@ -23,39 +24,49 @@ def safe(text: str) -> str:
     return discord.utils.escape_markdown(discord.utils.escape_mentions(text))[:200]
 
 
-def panel_embed(panel: Panel, engine: Engine) -> discord.Embed:
-    results = engine.results(panel)
+def panel_embed(panel: Panel, engine: Engine, join_mode: str = "legacy", results: list[Candidate] | None = None) -> discord.Embed:
+    results = engine.results(panel) if results is None else results
     state = engine.states.get(panel.place_id)
     status = {"active": "Escaneo activo", "paused": "Pausado", "broken": "Requiere reparación"}.get(panel.state, panel.state)
     embed = discord.Embed(title=f"Servidores · {safe(panel.name)}"[:256], color=0x5865F2)
     embed.description = (
         f"**{status}** · Objetivo: **0–{panel.max_players} jugadores**\n"
-        f"Consulta objetivo: {panel.interval} s · Vigencia máxima: {panel.freshness} s\n"
+        f"Perfil: **{panel.profile}** · Consulta objetivo: {panel.interval} s · Vigencia: {panel.ttl} s\n"
         f"[Abrir juego](https://www.roblox.com/games/{panel.place_id}) · Place `{panel.place_id}`\n\n"
         "**Últimos conteos observados** — pueden cambiar antes de entrar.\n"
-        "Selecciona una instancia para comprobarla antes de recibir el enlace."
+        + ("Cada resultado tiene su enlace directo. **Buscar mejor ahora** pide una comprobación reciente.\n"
+         "Los enlaces directos no revalidan al pulsar y usan el mecanismo heredado de Roblox."
+         if join_mode == "legacy" else "Selecciona una instancia para comprobarla. Modo de entrada: abrir el juego.")
     )
     if panel.state == "active":
         for index, candidate in enumerate(results, 1):
-            label = "Baja población en muestras recientes" if candidate.stable else "Historial todavía limitado"
-            if candidate.playing == 0:
-                label = "Cero observado; acceso y continuidad inciertos"
+            stats = evidence(candidate, panel, time.time())
+            label = f"**{stats.band.capitalize()}** · Calidad {stats.score:.0f}/100 (no es probabilidad)"
+            link = f"\n[Entrar a esta instancia]({join_url(panel.place_id, candidate.job_id)})" if join_mode == "legacy" else ""
             embed.add_field(
                 name=f"{index}. {candidate.playing}/{candidate.capacity} jugadores",
                 value=(f"Consultado <t:{int(candidate.observed_at)}:R>\n"
-                       f"Dato caduca a las <t:{int(candidate.observed_at + panel.freshness)}:T>\n"
-                       f"{label}\nID: `{candidate.job_id}`"), inline=False)
+                       f"Dato caduca a las <t:{int(candidate.observed_at + panel.ttl)}:T>\n"
+                       f"{label}\n{stats.samples} muestras recientes · Tendencia +{stats.growth_per_minute:g}/min\n"
+                       f"Primera observación <t:{int(candidate.first_seen)}:R>\nID: `{candidate.job_id}`{link}"), inline=False)
         if not results:
             embed.add_field(name="Sin candidatos recientes",
                             value="No hay resultados que cumplan el filtro y la vigencia. La búsqueda continúa dentro del presupuesto.", inline=False)
     if state and panel.state == "active":
-        details = f"{state.pages} páginas · {state.scanned} instancias observadas en el último recorrido.\n{state.reason}."
+        details = (f"{state.pages} páginas · {state.scanned} instancias · {state.reobserved} ya conocidas.\n"
+                   f"Watchlist: {len(state.watchlist)} · Baja población: {state.low_count}\n{state.reason}.")
         if state.last_success:
             details += f"\nÚltima respuesta correcta: <t:{int(state.last_success)}:R>."
         if state.error:
             details += f"\n⚠ {state.error}\nPróximo intento no antes de <t:{int(state.next_at)}:T>."
             embed.color = 0xF0B232
         embed.add_field(name="Estado de la búsqueda", value=details[:1024], inline=False)
+        metrics = state.metrics.get(panel.id)
+        if metrics:
+            embed.add_field(name="Reobservación a 10–30 s · últimas 24 h",
+                            value=(f"Siguen bajo el filtro: **{metrics['success']}** · Lo superan: **{metrics['failed']}**\n"
+                                   f"Sin reobservación: **{metrics['unknown']}** · Pendientes: {metrics['pending']}\n"
+                                   "Mide datos de la API, no entradas reales. Usa Calidad para ver los reportes."), inline=False)
     if panel.error:
         embed.add_field(name="Aviso del panel", value=panel.error[:1024], inline=False)
     embed.set_footer(text=f"Panel {panel.id} · Lista parcial · Los intervalos dependen de Roblox y la carga")
@@ -78,10 +89,35 @@ class PanelView(discord.ui.View):
             ("refresh", "Actualizar", discord.ButtonStyle.primary),
             ("configure", "Configurar", discord.ButtonStyle.secondary),
             ("toggle", "Reanudar" if panel.state == "paused" else "Pausar", discord.ButtonStyle.secondary),
+            ("quality", "Calidad", discord.ButtonStyle.secondary),
         ):
             button = discord.ui.Button(custom_id=f"panel:{panel.id}:{action}", label=label, style=style, row=1)
             button.callback = getattr(self, action)
             self.add_item(button)
+        if bot.settings.join_mode == "legacy" and panel.state == "active":
+            for index, candidate in enumerate(results[:5], 1):
+                self.add_item(discord.ui.Button(label=f"Entrar {index} · {candidate.job_id[:6]}",
+                                               url=join_url(panel.place_id, candidate.job_id), row=2))
+
+    async def quality(self, interaction: discord.Interaction):
+        panel = await self.get_panel(interaction)
+        if not panel:
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        stats = await self.bot.store.quality(panel.place_id, panel.max_players, panel.profile)
+        reports = await self.bot.store.reports(panel.id)
+        text = (f"**Calidad · {safe(panel.name)} · últimas 24 h**\n"
+                f"Recomendaciones reobservadas bajo el filtro: {stats['success']}\n"
+                f"Reobservadas por encima: {stats['failed']}\n"
+                f"Sin dato posterior: {stats['unknown']} · Pendientes: {stats['pending']}\n")
+        if stats['total']:
+            text += f"Cobertura de reobservación: {stats['coverage']:.0%}. Éxito posible entre {stats['lower']:.0%} y {stats['upper']:.0%} considerando los desconocidos.\n"
+        text += (f"\n**Reportes voluntarios de entrada**\n"
+                 f"Había 0–1 jugadores más: {reports.get('low', 0)}\n"
+                 f"Había más: {reports.get('busy', 0)} · No pudo entrar: {reports.get('unavailable', 0)}\n\n"
+                 "El 70 % es una meta, no una garantía. Las reobservaciones no verifican el cliente Roblox y los reportes voluntarios pueden tener sesgo.\n"
+                 "Perfiles: rapido = ocupación; equilibrado = historial + frescura; precision = exige confirmación; evento = evidencia posterior a su activación.")
+        await interaction.followup.send(text[:1950], ephemeral=True)
 
     async def get_panel(self, interaction: discord.Interaction, manager: bool = False) -> Panel | None:
         panel = await self.bot.store.get(self.panel_id)
@@ -127,10 +163,14 @@ class PanelView(discord.ui.View):
         # No rank-based selection: this URL always refers to the selected JobId.
         # Recheck immediately before queueing the Discord send, after any async work.
         current = await self.bot.store.get(panel.id)
-        if not current or not candidate.eligible(current, time.time()) or time.time() - candidate.observed_at > 5:
+        if not current or not ranked([candidate], current, time.time()) or time.time() - candidate.observed_at > 5:
             await interaction.followup.send("El dato o la configuración cambió antes de preparar la respuesta. Vuelve a buscar.", ephemeral=True)
             return
-        view = discord.ui.View(timeout=10)
+        receipt = await self.bot.store.receipt(current, candidate, interaction.user.id)
+        if time.time() - candidate.observed_at > 5:
+            await interaction.followup.send("La comprobación caducó mientras se preparaba. Vuelve a buscar.", ephemeral=True)
+            return
+        view = FeedbackView(self.bot, receipt, interaction.user.id)
         if self.bot.settings.join_mode == "legacy":
             view.add_item(discord.ui.Button(label="Intentar entrar · experimental", url=join_url(panel.place_id, candidate.job_id)))
             note = "Enlace heredado de Roblox: puede no funcionar en tu dispositivo. No reserva plaza ni garantiza la instancia."
@@ -142,7 +182,8 @@ class PanelView(discord.ui.View):
             f"Consultado <t:{int(candidate.observed_at)}:R>. Puede cambiar inmediatamente.\n"
             f"Place: `{panel.place_id}`\nJobId: `{candidate.job_id}`\n{note}",
             view=view, ephemeral=True, wait=True)
-        self.bot.track_task(self.bot.expire_link(message, candidate.observed_at + 10))
+        view.message = message
+        self.bot.track_task(self.bot.expire_link(message, candidate.observed_at + 10, view))
 
     async def refresh(self, interaction: discord.Interaction):
         panel = await self.get_panel(interaction)
@@ -178,6 +219,40 @@ class PanelView(discord.ui.View):
             await interaction.followup.send(text, ephemeral=True)
         else:
             await interaction.response.send_message(text, ephemeral=True)
+
+
+class FeedbackView(discord.ui.View):
+    def __init__(self, bot: ServerBot, receipt: str, user_id: int):
+        super().__init__(timeout=300)
+        self.bot, self.receipt, self.user_id = bot, receipt, user_id
+        self.message = None
+        for outcome, label in (("low", "Había 0–1 jugadores más"), ("busy", "Había más de 1"), ("unavailable", "No pude entrar")):
+            button = discord.ui.Button(label=label, custom_id=f"report:{receipt}:{outcome}", row=1)
+            async def callback(interaction: discord.Interaction, value=outcome):
+                await interaction.response.defer()
+                accepted = await self.bot.store.report(self.receipt, interaction.user.id, interaction.guild_id, value)
+                if accepted:
+                    for child in list(self.children):
+                        if child.url:
+                            self.remove_item(child)
+                        else:
+                            child.disabled = True
+                    await interaction.edit_original_response(content="Gracias. Tu reporte de entrada quedó guardado para medir la calidad real.", view=self)
+                else:
+                    await interaction.followup.send("El reporte ya fue enviado o caducó.", ephemeral=True)
+            button.callback = callback
+            self.add_item(button)
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Esta comprobación pertenece a otro usuario.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        if self.message:
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(view=None)
 
 
 class ConfigModal(discord.ui.Modal, title="Configurar este juego"):
@@ -253,10 +328,10 @@ class PanelCommands(app_commands.Group, name="panel", description="Un panel conf
                 panel.error = "Creación del mensaje pendiente; usa /panel reparar si se interrumpe."
                 await self.bot.store.save(panel)
                 try:
-                    message = await canal.send(embed=panel_embed(panel, self.bot.engine))
+                    message = await canal.send(embed=panel_embed(panel, self.bot.engine, self.bot.settings.join_mode))
                     panel.message_id, panel.state, panel.error = str(message.id), "active", ""
                     await self.bot.store.save(panel)
-                    await message.edit(embed=panel_embed(panel, self.bot.engine), view=PanelView(self.bot, panel, []))
+                    await message.edit(embed=panel_embed(panel, self.bot.engine, self.bot.settings.join_mode), view=PanelView(self.bot, panel, []))
                 except discord.HTTPException:
                     panel.state, panel.error = "broken", "No se pudo publicar el panel; usa /panel reparar."
                     await self.bot.store.save(panel)
@@ -301,6 +376,22 @@ class PanelCommands(app_commands.Group, name="panel", description="Un panel conf
         except ValueError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
 
+    @app_commands.command(description="Elige el algoritmo de selección para este juego")
+    @app_commands.choices(modo=[
+        app_commands.Choice(name="Equilibrado: historial y frescura", value="equilibrado"),
+        app_commands.Choice(name="Precisión: solo candidatos reobservados", value="precision"),
+        app_commands.Choice(name="Evento: exige evidencia nueva y reduce vigencia", value="evento"),
+        app_commands.Choice(name="Rápido: menor ocupación observada", value="rapido"),
+    ])
+    async def perfil(self, interaction: discord.Interaction, panel: str, modo: str):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self.bot.change(panel, interaction.guild_id, profile=modo,
+                                  event_since=time.time() if modo == "evento" else 0)
+            await interaction.followup.send("Perfil actualizado. Precisión y evento pueden dejar el TOP vacío hasta reunir evidencia suficiente; el filtro de jugadores nunca se amplía solo.", ephemeral=True)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
     @app_commands.command(description="Recupera un panel borrado o sin permisos; permite moverlo")
     async def reparar(self, interaction: discord.Interaction, panel: str, canal: discord.TextChannel):
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -318,10 +409,11 @@ class PanelCommands(app_commands.Group, name="panel", description="Un panel conf
                     current.channel_id = str(canal.id)
                     current.state, current.error = "active", ""
                     current.version += 1
-                    message = await canal.send(embed=panel_embed(current, self.bot.engine))
+                    snapshot = self.bot.engine.results(current)
+                    message = await canal.send(embed=panel_embed(current, self.bot.engine, self.bot.settings.join_mode, snapshot))
                     current.message_id = str(message.id)
                     await self.bot.store.save(current)
-                    await message.edit(view=PanelView(self.bot, current, self.bot.engine.results(current)))
+                    await message.edit(view=PanelView(self.bot, current, snapshot))
                     self.bot.last_render.pop(current.id, None)
                     if old_message:
                         with contextlib.suppress(discord.HTTPException):
@@ -375,6 +467,7 @@ class ServerBot(discord.Client):
             panels = [p for p in await self.store.panels() if p.guild_id == str(interaction.guild_id)]
             text = (f"Paneles de este Discord: {len(panels)}\n"
                     f"Presupuesto Roblox global configurado: {settings.rpm} solicitudes/minuto (no garantizado).\n"
+                    f"Techo actual tras ajustes: {60 / self.roblox.gate.spacing:.1f}/min; 429 recibidos: {self.roblox.rate_limits}.\n"
                     f"Modo de entrada: {settings.join_mode}.\n")
             for p in panels[:8]:
                 state = self.engine.states.get(p.place_id)
@@ -420,6 +513,9 @@ class ServerBot(discord.Client):
                 if updated.state == "active":
                     self.check_capacity(await self.store.panels(), updated.place_id)
                 await self.store.save(updated)
+                state = self.engine.states.get(updated.place_id)
+                if state:
+                    state.metrics.pop(panel_id, None)
                 self.last_render.pop(panel_id, None)
                 await self.engine.refresh(updated)
 
@@ -442,10 +538,16 @@ class ServerBot(discord.Client):
                 log.error("Tarea secundaria falló: %s", type(finished.exception()).__name__)
         task.add_done_callback(done)
 
-    async def expire_link(self, message, expires: float):
+    async def expire_link(self, message, expires: float, feedback: FeedbackView | None = None):
         await asyncio.sleep(max(0, expires - time.time()))
         with contextlib.suppress(discord.HTTPException):
-            await message.edit(content="La comprobación caducó. Selecciona la instancia nuevamente en el panel.", view=None)
+            if feedback:
+                for child in list(feedback.children):
+                    if child.url:
+                        feedback.remove_item(child)
+                await message.edit(view=feedback)
+            else:
+                await message.edit(content="La comprobación caducó. Selecciona la instancia nuevamente en el panel.", view=None)
 
     async def resolve_name(self, panel_id: str, place: str):
         try:
@@ -492,13 +594,14 @@ class ServerBot(discord.Client):
                         current = await self.store.get(panel.id)
                         if not current or current.state == "broken":
                             continue
-                        embed = panel_embed(current, self.engine)
+                        snapshot = self.engine.results(current)
+                        embed = panel_embed(current, self.engine, self.settings.join_mode, snapshot)
                         payload = embed.to_dict()
                         if self.last_render.get(current.id) == payload:
                             continue
                         try:
                             message = self.get_partial_messageable(int(current.channel_id)).get_partial_message(int(current.message_id))
-                            await message.edit(embed=embed, view=PanelView(self, current, self.engine.results(current)))
+                            await message.edit(embed=embed, view=PanelView(self, current, snapshot))
                             self.last_render[current.id] = payload
                         except (discord.NotFound, discord.Forbidden):
                             current.state, current.error = "broken", "Mensaje/canal no disponible o sin permisos. Usa /panel reparar."

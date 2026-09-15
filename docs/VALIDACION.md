@@ -2,6 +2,11 @@
 
 ## Ampliación avanzada
 
+### Descubrimientos visibles sin falsa confirmación
+
+- **53 pruebas aprobadas en Python 3.12.10 / Windows.** Las nuevas pruebas verifican que un descubrimiento aparece con aviso explícito y enlace, pero no pasa a las recomendaciones estrictas ni a la entrega comprobada. También verifican caducidad, pausa, filtro de población y prioridad de resultados confirmados.
+- El cambio responde a una captura con cien conteos bajos y cero reobservaciones; no se ha probado que solucione errores de entrada o la falta de reobservación del proveedor.
+
 ### Corrección de seguimiento sin resultados
 
 - **51 pruebas aprobadas en Python 3.12.10 / Windows.** Una simulación integral con cien instancias por página, una página por ciclo e intervalo de quince segundos obtiene cinco candidatos estables a los noventa segundos de reloj simulado, con siete solicitudes. No es una medición real de Roblox.

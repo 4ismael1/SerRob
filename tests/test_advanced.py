@@ -340,3 +340,39 @@ def test_disappearing_cohort_is_released_without_inventing_confirmation(tmp_path
         assert engine.results(p, clock[0]-13) == []
         await store.close()
     asyncio.run(run())
+
+
+def test_deep_discovery_is_visible_but_not_a_verified_entry():
+    async def run():
+        now = time.time()
+        p = panel(profile="profundo")
+        c = candidate(points=((now, 1),))
+        engine = Engine(None, None)
+        engine.states["30"] = PlaceState(candidates={c.job_id: c})
+        assert engine.results(p, now) == []
+        assert engine.display_results(p, now) == [c]
+        assert engine.entry_candidate(p, c.job_id) is None
+        embed = panel_embed(p, engine)
+        assert "SIN CONFIRMAR" in embed.fields[0].value
+        assert "Exploración" in embed.fields[0].name
+        bot = SimpleNamespace(settings=SimpleNamespace(join_mode="legacy"))
+        view = PanelView(bot, p, [c])
+        assert view.children[0].disabled
+        links = [item for item in view.children if getattr(item, "url", None)]
+        assert len(links) == 1 and links[0].label.startswith("Probar sin confirmar")
+        assert c.job_id in links[0].url
+        assert engine.display_results(p, now + 11) == []
+        assert engine.display_results(replace(p, state="paused"), now) == []
+    asyncio.run(run())
+
+
+def test_deep_confirmed_precedes_discoveries_without_relaxing_filter():
+    now = time.time()
+    p = panel(profile="profundo")
+    proven = candidate(points=tuple((now-offset, 1) for offset in (60,45,30,15,0)))
+    new = candidate(2, ((now, 0),))
+    busy = candidate(3, ((now, 5),))
+    engine = Engine(None, None)
+    engine.states["30"] = PlaceState(candidates={c.job_id:c for c in (new,busy,proven)})
+    assert engine.results(p, now) == [proven]
+    assert engine.display_results(p, now) == [proven, new]

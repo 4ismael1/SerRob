@@ -15,7 +15,7 @@ from .engine import Engine
 from .models import Candidate, Panel, join_url, parse_place
 from .roblox import ProviderError, Roblox
 from .storage import Store
-from .analytics import evidence
+from .analytics import evidence, ranked
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def safe(text: str) -> str:
 
 
 def panel_embed(panel: Panel, engine: Engine, join_mode: str = "legacy", results: list[Candidate] | None = None) -> discord.Embed:
-    results = engine.results(panel) if results is None else results
+    results = engine.display_results(panel) if results is None else results
     state = engine.states.get(panel.place_id)
     status = {"active": "Escaneo activo", "paused": "Pausado", "broken": "Requiere reparación"}.get(panel.state, panel.state)
     embed = discord.Embed(title=f"Servidores · {safe(panel.name)}"[:256], color=0x5865F2)
@@ -39,12 +39,17 @@ def panel_embed(panel: Panel, engine: Engine, join_mode: str = "legacy", results
          if join_mode == "legacy" else "Selecciona una instancia para comprobarla. Modo de entrada: abrir el juego.")
     )
     if panel.state == "active":
+        if panel.profile == "profundo" and any(not ranked([c], panel, time.time()) for c in results):
+            embed.description += "\n\n**Exploración sin confirmar:** estos conteos son recientes, pero no prueban estabilidad ni acceso. Sus enlaces permiten intentarlo; no son recomendaciones de Profundo."
         for index, candidate in enumerate(results, 1):
             stats = evidence(candidate, panel, time.time())
             label = f"**{stats.band.capitalize()}** · Calidad {stats.score:.0f}/100 (no es probabilidad)"
+            unconfirmed = panel.profile == "profundo" and not ranked([candidate], panel, time.time())
+            if unconfirmed:
+                label = "**SIN CONFIRMAR** · No reúne la evidencia exigida por Profundo"
             link = f"\n[Entrar a esta instancia]({join_url(panel.place_id, candidate.job_id)})" if join_mode == "legacy" else ""
             embed.add_field(
-                name=f"{index}. {candidate.playing}/{candidate.capacity} jugadores",
+                name=f"{index}. {candidate.playing}/{candidate.capacity} jugadores" + (" · Exploración" if unconfirmed else ""),
                 value=(f"Consultado <t:{int(candidate.observed_at)}:R>\n"
                        f"Dato caduca a las <t:{int(candidate.observed_at + panel.ttl)}:T>\n"
                        f"{label}\n{stats.samples} muestras recientes · Tendencia +{stats.growth_per_minute:g}/min\n"
@@ -89,11 +94,12 @@ class PanelView(discord.ui.View):
     def __init__(self, bot: ServerBot, panel: Panel, results: list[Candidate]):
         super().__init__(timeout=None)
         self.bot, self.panel_id = bot, panel.id
+        selectable = [c for c in results if panel.profile != "profundo" or ranked([c], panel, time.time())]
         options = [discord.SelectOption(label=f"{c.playing}/{c.capacity} · {c.job_id[:8]}", value=c.job_id,
-                                        description="Comprobar esta instancia y preparar entrada") for c in results]
+                                        description="Comprobar esta instancia y preparar entrada") for c in selectable]
         picker = discord.ui.Select(custom_id=f"panel:{panel.id}:select", placeholder="Selecciona un servidor",
                                    options=options or [discord.SelectOption(label="Sin candidatos", value="none")],
-                                   disabled=not results or panel.state != "active", row=0)
+                                   disabled=not selectable or panel.state != "active", row=0)
         picker.callback = self.pick
         self.add_item(picker)
         for action, label, style in (
@@ -108,7 +114,8 @@ class PanelView(discord.ui.View):
             self.add_item(button)
         if bot.settings.join_mode == "legacy" and panel.state == "active":
             for index, candidate in enumerate(results[:5], 1):
-                self.add_item(discord.ui.Button(label=f"Entrar {index} · {candidate.job_id[:6]}",
+                prefix = "Probar sin confirmar" if panel.profile == "profundo" and not ranked([candidate], panel, time.time()) else "Entrar"
+                self.add_item(discord.ui.Button(label=f"{prefix} {index} · {candidate.job_id[:6]}",
                                                url=join_url(panel.place_id, candidate.job_id), row=2))
 
     async def quality(self, interaction: discord.Interaction):
@@ -425,7 +432,7 @@ class PanelCommands(app_commands.Group, name="panel", description="Un panel conf
                     current.channel_id = str(canal.id)
                     current.state, current.error = "active", ""
                     current.version += 1
-                    snapshot = self.bot.engine.results(current)
+                    snapshot = self.bot.engine.display_results(current)
                     message = await canal.send(embed=panel_embed(current, self.bot.engine, self.bot.settings.join_mode, snapshot))
                     current.message_id = str(message.id)
                     await self.bot.store.save(current)
@@ -610,7 +617,7 @@ class ServerBot(discord.Client):
                         current = await self.store.get(panel.id)
                         if not current or current.state == "broken":
                             continue
-                        snapshot = self.engine.results(current)
+                        snapshot = self.engine.display_results(current)
                         embed = panel_embed(current, self.engine, self.settings.join_mode, snapshot)
                         payload = embed.to_dict()
                         if self.last_render.get(current.id) == payload:

@@ -77,6 +77,19 @@ class Engine:
             return candidate
         return None
 
+    def display_results(self, panel: Panel, now: float | None = None) -> list[Candidate]:
+        """Show fresh discoveries separately; never promote them into strict recommendations."""
+        now = time.time() if now is None else now
+        confirmed = self.results(panel, now)
+        state = self.states.get(panel.place_id)
+        if panel.profile != "profundo" or not state:
+            return confirmed
+        ids = {c.job_id for c in confirmed}
+        discoveries = sorted((c for c in state.candidates.values()
+                              if c.job_id not in ids and c.eligible(panel, now)),
+                             key=lambda c: (-c.observed_at, c.playing, c.job_id))
+        return (confirmed + discoveries)[:5]
+
     async def run(self):
         last_cleanup = 0.0
         while True:

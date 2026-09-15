@@ -1,5 +1,13 @@
 # Estrategia para encontrar servidores poco concurridos que duren
 
+## Presentación de descubrimientos sin confirmar
+
+La captura del usuario después de la corrección de grupos seguía mostrando cien conteos bajos, cero IDs reobservados y una revisión sin coincidencias. El cambio de planificador no permite obligar a Roblox a devolver los mismos servidores. No se ha resuelto ni demostrado la estabilidad real por el mero hecho de corregir el seguimiento.
+
+Profundo muestra ahora hasta cinco resultados: primero los que cumplen su criterio estricto y después descubrimientos recientes identificados como **SIN CONFIRMAR / Exploración**. Los segundos tienen botones **Probar sin confirmar** y no reciben etiqueta de estabilidad ni puntuación presentada como recomendación. Ambos respetan el filtro y la vigencia de diez segundos; no se restaura historial caduco.
+
+El selector de comprobación y Buscar mejor ahora siguen exigiendo el criterio estricto. Las mediciones prospectivas de recomendaciones siguen sin contar estos descubrimientos como recomendaciones confirmadas. Este cambio hace visibles los datos disponibles; **no demuestra que sean accesibles ni corrige el error de entrada del cliente Roblox**. Con intervalo de quince segundos y vigencia de diez, siguen siendo posibles huecos entre respuestas.
+
 ## Qué cambia respecto a buscar el primer servidor con una persona
 
 El objetivo es encontrar una instancia accesible que permanezca poco concurrida, no simplemente un registro cuyo campo `playing` sea 1. Son tres preguntas diferentes: ¿tiene poca población?, ¿la mantiene entre observaciones?, ¿puede entrar este usuario? La lista pública solo aporta evidencia parcial para las dos primeras.

@@ -131,6 +131,8 @@ El presupuesto global por defecto de 30/min no garantiza acceso: en una prueba r
 
 ### Estrategia de páginas profundas
 
+Si no puede confirmar suficientes servidores, el panel también muestra descubrimientos recientes como **SIN CONFIRMAR / Exploración**, con botones **Probar sin confirmar**. No se mezclan con las recomendaciones estrictas ni habilitan el selector de comprobación. Se mantienen el filtro y la caducidad; estos enlaces no garantizan acceso ni estabilidad.
+
 `/panel perfil panel:ID modo:profundo` separa el avance por la lista de las revisiones a páginas conocidas. Funciona incluso con una sola página por ciclo y exige al menos sesenta segundos de estabilidad observada antes de recomendar, con vigencia máxima de diez segundos. Puede quedar vacío hasta reunir evidencia. El panel muestra fase y profundidad del recorrido.
 
 Consulta la [estrategia investigada, alternativas y protocolo de prueba](docs/ESTRATEGIA.md). No presupone que una página profunda equivalga a una instancia antigua ni que estabilidad observada garantice acceso. La compatibilidad del enlace y el error de Roblox siguen pendientes de comprobar en el dispositivo del usuario.

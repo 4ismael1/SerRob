@@ -15,7 +15,7 @@ from .engine import Engine
 from .models import Candidate, Panel, join_url, parse_place
 from .roblox import ProviderError, Roblox
 from .storage import Store
-from .analytics import evidence, ranked
+from .analytics import evidence
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +52,19 @@ def panel_embed(panel: Panel, engine: Engine, join_mode: str = "legacy", results
         if not results:
             embed.add_field(name="Sin candidatos recientes",
                             value="No hay resultados que cumplan el filtro y la vigencia. La búsqueda continúa dentro del presupuesto.", inline=False)
+            if state:
+                if state.error:
+                    cause = "Consulta interrumpida: revisa el error del proveedor indicado abajo."
+                elif any(c.eligible(panel, time.time()) for c in state.candidates.values()):
+                    cause = "Hay conteos bajos recientes, pero no reúnen la confirmación exigida por este perfil."
+                elif state.candidates:
+                    cause = "Los conteos anteriores caducaron o superaron el filtro. No se conoce su ocupación actual."
+                else:
+                    cause = "Aún no se han obtenido candidatos que cumplan el filtro."
+                embed.add_field(name="Motivo de la espera", value=cause, inline=False)
     if state and panel.state == "active":
         details = (f"{state.pages} páginas · {state.scanned} instancias · {state.reobserved} ya conocidas.\n"
+                   f"Fase: {state.search_phase} · Mayor profundidad recorrida: {state.max_depth}\n"
                    f"Watchlist: {len(state.watchlist)} · Baja población: {state.low_count}\n{state.reason}.")
         if state.last_success:
             details += f"\nÚltima respuesta correcta: <t:{int(state.last_success)}:R>."
@@ -116,7 +127,7 @@ class PanelView(discord.ui.View):
                  f"Había 0–1 jugadores más: {reports.get('low', 0)}\n"
                  f"Había más: {reports.get('busy', 0)} · No pudo entrar: {reports.get('unavailable', 0)}\n\n"
                  "El 70 % es una meta, no una garantía. Las reobservaciones no verifican el cliente Roblox y los reportes voluntarios pueden tener sesgo.\n"
-                 "Perfiles: rapido = ocupación; equilibrado = historial + frescura; precision = exige confirmación; evento = evidencia posterior a su activación.")
+                 "Perfiles: rapido = ocupación; equilibrado = historial; precision = confirmación; evento = evidencia nueva; profundo = exploración y estabilidad de 60 s.")
         await interaction.followup.send(text[:1950], ephemeral=True)
 
     async def get_panel(self, interaction: discord.Interaction, manager: bool = False) -> Panel | None:
@@ -163,11 +174,14 @@ class PanelView(discord.ui.View):
         # No rank-based selection: this URL always refers to the selected JobId.
         # Recheck immediately before queueing the Discord send, after any async work.
         current = await self.bot.store.get(panel.id)
-        if not current or not ranked([candidate], current, time.time()) or time.time() - candidate.observed_at > 5:
+        candidate = self.bot.engine.entry_candidate(current, candidate.job_id) if current else None
+        if candidate is None:
             await interaction.followup.send("El dato o la configuración cambió antes de preparar la respuesta. Vuelve a buscar.", ephemeral=True)
             return
         receipt = await self.bot.store.receipt(current, candidate, interaction.user.id)
-        if time.time() - candidate.observed_at > 5:
+        current = await self.bot.store.get(panel.id)
+        candidate = self.bot.engine.entry_candidate(current, candidate.job_id) if current else None
+        if candidate is None:
             await interaction.followup.send("La comprobación caducó mientras se preparaba. Vuelve a buscar.", ephemeral=True)
             return
         view = FeedbackView(self.bot, receipt, interaction.user.id)
@@ -382,13 +396,14 @@ class PanelCommands(app_commands.Group, name="panel", description="Un panel conf
         app_commands.Choice(name="Precisión: solo candidatos reobservados", value="precision"),
         app_commands.Choice(name="Evento: exige evidencia nueva y reduce vigencia", value="evento"),
         app_commands.Choice(name="Rápido: menor ocupación observada", value="rapido"),
+        app_commands.Choice(name="Profundo: explorar y exigir estabilidad de 60 s", value="profundo"),
     ])
     async def perfil(self, interaction: discord.Interaction, panel: str, modo: str):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await self.bot.change(panel, interaction.guild_id, profile=modo,
                                   event_since=time.time() if modo == "evento" else 0)
-            await interaction.followup.send("Perfil actualizado. Precisión y evento pueden dejar el TOP vacío hasta reunir evidencia suficiente; el filtro de jugadores nunca se amplía solo.", ephemeral=True)
+            await interaction.followup.send("Perfil actualizado. Precisión, evento y profundo pueden dejar el TOP vacío hasta reunir evidencia suficiente. Profundo exige estabilidad observada durante al menos 60 s; el filtro de jugadores nunca se amplía solo.", ephemeral=True)
         except ValueError as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
 

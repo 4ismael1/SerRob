@@ -192,3 +192,98 @@ def test_causal_replay_counts_missing_and_filled_servers():
     assert result["rapido"]["unknown"] >= 1
     assert result["precision"]["empty_snapshots"] >= 1
     assert not any(r["goal_supported"] for r in result.values())
+
+
+def test_configured_interval_survives_event_pressure_and_refresh(tmp_path):
+    async def run():
+        store = Store(str(tmp_path / "cadence.db"))
+        await store.initialize()
+        p = panel(profile="evento", interval=60)
+        class API:
+            async def servers(self, place, cursor):
+                return [], None
+        engine = Engine(store, API())
+        engine.states["30"] = PlaceState(pressure=1)
+        await engine.scan("30", [p])
+        state = engine.states["30"]
+        assert state.effective_interval == 60
+        assert state.next_at >= state.last_started + 60
+        await engine.refresh(p)
+        assert state.next_at >= state.last_started + 60
+        await store.close()
+    asyncio.run(run())
+
+
+def test_latest_snapshot_and_provider_block_control_entry():
+    engine = Engine(None, None)
+    now = time.time()
+    c = candidate(points=((now, 1),))
+    state = engine.states.setdefault("30", PlaceState(candidates={c.job_id: c}))
+    assert engine.entry_candidate(panel(), c.job_id) == c
+    state.candidates[c.job_id] = replace(c, playing=9)
+    assert engine.entry_candidate(panel(), c.job_id) is None
+    state.candidates[c.job_id] = c
+    state.blocked_until = now + 30
+    assert engine.entry_candidate(panel(), c.job_id) is None
+
+
+def test_delivery_rejects_server_that_fills_during_receipt(tmp_path):
+    from serverbot.discord_app import ServerBot
+    from serverbot.config import Settings
+    async def run():
+        bot = ServerBot(Settings(database=str(tmp_path / "delivery.db")))
+        await bot.store.initialize()
+        p = panel()
+        await bot.store.save(p)
+        c = candidate(points=((time.time(), 1),))
+        state = bot.engine.states.setdefault("30", PlaceState(candidates={c.job_id: c}))
+        messages = []
+        async def send(*args, **kwargs):
+            messages.append((args, kwargs))
+        original_receipt = bot.store.receipt
+        async def racing_receipt(*args):
+            receipt = await original_receipt(*args)
+            state.candidates[c.job_id] = replace(c, playing=10)
+            return receipt
+        bot.store.receipt = racing_receipt
+        interaction = SimpleNamespace(user=SimpleNamespace(id=99), followup=SimpleNamespace(send=send))
+        await PanelView(bot, p, []).deliver(interaction, p, c)
+        assert len(messages) == 1 and "view" not in messages[0][1]
+        await bot.close()
+    asyncio.run(run())
+
+
+def test_deep_profile_requires_minute_of_observed_stability():
+    p = panel(profile="profundo")
+    proven = candidate(points=((40, 1), (55, 1), (70, 1), (85, 1), (100, 1)))
+    young = candidate(2)
+    assert ranked([young, proven], p, 100) == [proven]
+    assert ranked([proven], p, 111) == []
+    interrupted = candidate(3, ((1, 1), (90, 1), (100, 1)))
+    assert ranked([interrupted], p, 100) == []
+
+
+def test_deep_frontier_advances_with_one_page_and_survives_monitoring(tmp_path, monkeypatch):
+    async def run():
+        clock = [1000.0]
+        monkeypatch.setattr("serverbot.engine.time.time", lambda: clock[0])
+        store = Store(str(tmp_path / "deep.db"))
+        await store.initialize()
+        p = panel(profile="profundo", pages=1)
+        class API:
+            calls = []
+            async def servers(self, place, cursor):
+                self.calls.append(cursor)
+                number = int(cursor) if cursor else 1
+                return [Observation(str(UUID(int=number)), 1, 20, clock[0])], str(number + 1)
+        api = API()
+        engine = Engine(store, api)
+        for _ in range(4):
+            await engine.scan("30", [p])
+            clock[0] += 10
+        assert api.calls == [None, "2", "2", "3"]
+        assert engine.states["30"].explore_cursor == "4"
+        assert engine.states["30"].max_depth == 3
+        assert engine.results(p) == []  # Acquisition progress is not proof of a safe recommendation.
+        await store.close()
+    asyncio.run(run())

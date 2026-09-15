@@ -43,10 +43,10 @@ class Panel:
 
     @property
     def ttl(self) -> int:
-        return min(self.freshness, 8 if self.profile == "evento" else 10) if self.profile in {"precision", "evento"} else self.freshness
+        return min(self.freshness, 8 if self.profile == "evento" else 10) if self.profile in {"precision", "evento", "profundo"} else self.freshness
 
     def validate(self):
-        if self.profile not in {"rapido", "equilibrado", "precision", "evento"}:
+        if self.profile not in {"rapido", "equilibrado", "precision", "evento", "profundo"}:
             raise ValueError("Perfil desconocido.")
         for value, low, high, label in (
             (self.max_players, 0, 10, "Máximo de jugadores"),

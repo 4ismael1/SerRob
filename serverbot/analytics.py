@@ -95,7 +95,9 @@ def ranked(candidates, panel: Panel, now: float, incumbents: tuple[str, ...] = (
         if not candidate.eligible(panel, now) or now - candidate.observed_at > ttl:
             continue
         stats = evidence(candidate, panel, now)
-        if panel.profile in {"precision", "evento"} and (not stats.confirmed or stats.score < 60):
+        if panel.profile in {"precision", "evento", "profundo"} and (not stats.confirmed or stats.score < 60):
+            continue
+        if panel.profile == "profundo" and (stats.band != "estable" or stats.span < 60):
             continue
         sticky = 3 if candidate.job_id in incumbents and now - candidate.observed_at <= ttl / 2 else 0
         if panel.profile == "rapido":

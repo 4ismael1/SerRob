@@ -66,7 +66,7 @@ Cada recorrido consulta la cabecera ascendente. Mantiene hasta 50 referencias de
 
 Máximo configurado de páginas y veinte segundos por recorrido. Equilibrado continúa explorando si solo obtuvo cinco provisionales; rápido puede detenerse al completar el TOP. Los resultados ausentes conservan su fecha original y caducan individualmente. Máximo 500 referencias en memoria por Place, retenidas hasta cinco minutos.
 
-Una media móvil del llenado detectado puede reducir el intervalo solicitado a la mitad, con mínimo cinco segundos; evento hace lo mismo. Esto no aumenta el presupuesto HTTP. Cada 429 duplica la separación entre peticiones hasta sesenta segundos, respeta Retry-After y recupera ritmo gradualmente después de respuestas correctas. Si varios juegos compiten por el presupuesto, sus intervalos efectivos aumentan.
+Se registra una media móvil del llenado detectado, pero no se usa para acelerar consultas. Se corrigió el comportamiento inicial que reducía el intervalo a la mitad por presión o evento: contradecía el ajuste manual para reducir tráfico. Los botones tampoco acortan el intervalo del panel. Paneles del mismo Place comparten el intervalo mínimo solicitado entre sus suscripciones activas. Cada 429 duplica la separación entre peticiones hasta sesenta segundos, respeta Retry-After y recupera ritmo gradualmente después de respuestas correctas. Si varios juegos compiten por el presupuesto, sus intervalos efectivos aumentan.
 
 ### 4. Medición prospectiva
 

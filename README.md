@@ -101,7 +101,7 @@ Configurar 5 segundos en varios juegos **no garantiza** una consulta cada 5 segu
 - Persistencia de paneles e historial. Tras reiniciar, ningún dato guardado se ofrece como recomendación actual hasta reobservarlo.
 - El filtro de 0–1 nunca se amplía automáticamente. Si no hay resultados, el panel lo dice.
 - Cola acotada por juegos activos, dos peticiones HTTP simultáneas como máximo, sin ráfagas, backoff y `Retry-After` global.
-- Ante 429 reduce automáticamente el ritmo; lo recupera gradualmente sin superar el presupuesto configurado. La presión de llenado y el perfil evento ajustan el intervalo solicitado dentro de ese presupuesto.
+- Ante 429 reduce automáticamente el ritmo; lo recupera gradualmente sin superar el presupuesto configurado. Ni el perfil evento ni los botones de actualización acortan el intervalo configurado. Paneles del mismo Place comparten la consulta más frecuente solicitada por sus suscripciones activas.
 - Medición prospectiva del TOP a 10–30 segundos: aciertos, fallos y desconocidos separados. Botón **Calidad** con cobertura y reportes de entrada.
 - `401/403`: espera y explica la restricción, sin intentar cookies ni evasión.
 - Botones persistentes, comprobación de permisos al actuar y recuperación manual de mensajes borrados.
@@ -128,6 +128,12 @@ Para Steal An Egg empieza con `max_jugadores:1 intervalo:10 vigencia:15 paginas:
 El presupuesto global por defecto de 30/min no garantiza acceso: en una prueba real este juego devolvió 429 tras dos rondas. Evita aumentar peticiones ante un límite; el bot reduce el ritmo automáticamente. Varios juegos pueden requerir intervalos mayores.
 
 ## Investigación y objetivo del 70 %
+
+### Estrategia de páginas profundas
+
+`/panel perfil panel:ID modo:profundo` separa el avance por la lista de las revisiones a páginas conocidas. Funciona incluso con una sola página por ciclo y exige al menos sesenta segundos de estabilidad observada antes de recomendar, con vigencia máxima de diez segundos. Puede quedar vacío hasta reunir evidencia. El panel muestra fase y profundidad del recorrido.
+
+Consulta la [estrategia investigada, alternativas y protocolo de prueba](docs/ESTRATEGIA.md). No presupone que una página profunda equivalga a una instancia antigua ni que estabilidad observada garantice acceso. La compatibilidad del enlace y el error de Roblox siguen pendientes de comprobar en el dispositivo del usuario.
 
 Se inspeccionaron RoValra, BTRoblox y robloxserverfinder. Consulta la [investigación técnica, algoritmos, limitaciones y protocolo de medición](docs/INVESTIGACION.md). Incluye fuentes fijadas a commits y el resultado real con Steal An Egg.
 

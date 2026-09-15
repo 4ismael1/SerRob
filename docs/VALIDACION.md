@@ -2,6 +2,15 @@
 
 ## Ampliación avanzada
 
+### Corrección tras errores de entrada reportados
+
+- Ampliación posterior: **49 pruebas** aprobadas en Python 3.12.10 / Windows. Incluyen el perfil profundo, el avance con una página por ciclo y la conservación del cursor de descubrimiento durante seguimiento. Las 47 indicadas a continuación corresponden al paso previo de corrección.
+
+- 47 pruebas aprobadas en Python 3.12.10 / Windows. Nuevas regresiones: intervalo respetado ante evento/presión/actualización, bloqueo de entrega durante pausa del proveedor y ocupación que cambia mientras se prepara la respuesta privada.
+- La entrega consulta la última observación en memoria antes y después de operaciones de persistencia. No sigue usando el conteo capturado antes de esas esperas.
+- El panel explica si está vacío por error del proveedor, caducidad/filtro o falta de confirmación.
+- El mensaje del usuario «esta experiencia terminó o el servidor falló por un error inesperado» no identifica por sí solo la causa. Estos cambios no prueban que el error del cliente Roblox esté resuelto. El enlace directo continúa sin revalidación al pulsar y su compatibilidad debe comprobarse en el dispositivo del usuario.
+
 - 44 pruebas automatizadas aprobadas en Python 3.12.10 / Windows, incluyendo los casos anteriores.
 - Casos añadidos: ranking con historial frente a cero aislado, abstención por huecos o crecimiento, reinicio de evidencia en eventos, vigencia sin prolongación por continuidad del TOP, migración aditiva de SQLite, medición prospectiva con desconocidos, reportes ligados a usuario/Discord, recuperación gradual de cuota, exploración y caducidad de pistas de cursores, cambio a precisión durante selección, coherencia entre botones y resultados y replay causal con llenado/ausencias.
 - Prueba pública con Steal An Egg: primera ronda 200 instancias, segunda 15 con dos IDs repetidos, tercera detenida ante 429. Solo dos instantáneas: insuficientes para medir una tasa de éxito o mejora.

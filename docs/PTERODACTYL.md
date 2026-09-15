@@ -124,4 +124,6 @@ Detén el bot y realiza una copia de seguridad consistente. Si tu instalación u
 
 La migración SQLite de v1 a v2 es automática y conserva los paneles. El arranque vuelve a registrar comandos; `/panel perfil` añade selección de algoritmo por juego. Los comandos globales pueden tardar en aparecer en Discord. No borres la base para actualizar.
 
+Para la estrategia de seguimiento estable utiliza `/panel perfil panel:ID modo:profundo` después de actualizar. Mantén inicialmente tus intervalos actuales para comparar sin aumentar tráfico. La estrategia y sus límites están en [ESTRATEGIA.md](ESTRATEGIA.md). El perfil se guarda en el panel existente y no requiere recrearlo.
+
 Configuración inicial: máximo 1 jugador, intervalo 10 s, vigencia 15 s, dos páginas y perfil equilibrado. `JOIN_MODE=legacy` muestra enlaces por instancia. Elige precisión si aceptas menos resultados a cambio de exigir confirmación. El host comparte límites de red: no ejecutes una captura de auditoría junto al bot sobre la misma IP. Consulta [la investigación y medición](INVESTIGACION.md).

@@ -31,6 +31,10 @@ class PlaceState:
     page_hints: dict[str, tuple[str | None, float]] = field(default_factory=dict)
     explore_cursor: str | None = None
     explore_at: float = 0
+    explore_depth: int = 1
+    max_depth: int = 0
+    cursor_depths: dict[str, int] = field(default_factory=dict)
+    search_phase: str = "cabecera"
     incumbents: dict[str, tuple[str, ...]] = field(default_factory=dict)
     watchlist: tuple[str, ...] = ()
     metrics: dict[str, dict] = field(default_factory=dict)
@@ -57,6 +61,17 @@ class Engine:
         state = self.states.get(panel.place_id)
         return ranked(state.candidates.values(), panel, time.time() if now is None else now,
                       state.incumbents.get(panel.id, ())) if state else []
+
+    def entry_candidate(self, panel: Panel, job_id: str) -> Candidate | None:
+        """Read the latest snapshot, never a candidate captured before an await."""
+        now = time.time()
+        state = self.states.get(panel.place_id)
+        if not state or state.blocked_until > now:
+            return None
+        candidate = state.candidates.get(job_id)
+        if candidate and now - candidate.observed_at <= 5 and ranked([candidate], panel, now):
+            return candidate
+        return None
 
     async def run(self):
         last_cleanup = 0.0
@@ -101,17 +116,30 @@ class Engine:
         watch = sorted((c for c in before.values() if c.playing <= threshold and state.last_started - c.observed_at <= 180),
                        key=lambda c: evidence(c, panels[0], c.observed_at).score, reverse=True)[:50]
         targets = {c.job_id for c in watch}
+        deep = any(p.profile == "profundo" for p in panels)
+        cursor_ttl = 120 if deep else 45
         explore_due = state.cycles % 3 == 0
         hint_weights = {}
         for c in watch:
             hint = state.page_hints.get(c.job_id)
-            if hint and hint[0] and state.last_started - hint[1] <= 45:
+            if hint and hint[0] and state.last_started - hint[1] <= cursor_ttl:
                 hint_weights[hint[0]] = hint_weights.get(hint[0], 0) + evidence(c, panels[0], c.observed_at).score
         hints = sorted(hint_weights, key=hint_weights.get, reverse=True)
         head_next = None
         repeated, filling = 0, 0
+        # A discovery frontier is separate from pages revisited to monitor candidates.
+        # With one page per cycle, this still advances instead of rereading the head forever.
+        exploration_request = deep and explore_due
+        if deep and explore_due and state.explore_cursor and state.last_started - state.explore_at <= cursor_ttl:
+            cursor = state.explore_cursor
+        elif deep and not explore_due and hints:
+            cursor = hints[state.cycles % min(3, len(hints))]
+        elif deep and not hints:
+            exploration_request = True
+            if state.explore_cursor and state.last_started - state.explore_at <= cursor_ttl:
+                cursor = state.explore_cursor
+        state.search_phase = "exploración profunda" if exploration_request else "seguimiento" if cursor else "cabecera"
         state.cycles += 1
-        exploration_request = False
         try:
             async with asyncio.timeout(20):
                 for _ in range(max(p.pages for p in panels)):
@@ -127,6 +155,10 @@ class Engine:
                             break
                         raise
                     state.pages += 1
+                    depth = state.cursor_depths.get(cursor, 1) if cursor else 1
+                    state.max_depth = max(state.max_depth, depth)
+                    if next_cursor:
+                        state.cursor_depths[next_cursor] = depth + 1
                     if cursor is None:
                         head_next = next_cursor
                     observations = [o for o in observations if o.job_id not in seen]
@@ -149,10 +181,21 @@ class Engine:
                     state.error = ""
                     if exploration_request:
                         state.explore_cursor, state.explore_at = next_cursor, time.time()
+                        state.explore_depth = depth + 1 if next_cursor else 1
                     enough = all(len(self.results(p)) >= 5 and
                                  (p.profile == "rapido" or sum(evidence(c, p, time.time()).confirmed for c in self.results(p)) >= 3)
                                  for p in panels)
                     missing_targets = targets - seen
+                    if deep:
+                        # Follow discovery pages only during discovery. Monitoring cannot rewind its frontier.
+                        choices = ([next_cursor] if exploration_request else hints + [head_next, None])
+                        available = [value for value in choices if value not in cursors and
+                                     (value is not None or not exploration_request)]
+                        if not available:
+                            state.reason = "Fin del tramo disponible; seguimiento continúa en el próximo ciclo"
+                            break
+                        cursor = available[0]
+                        continue
                     if enough and (all(p.profile == "rapido" for p in panels) or
                                    ((not explore_due or state.pages >= 2) and (not missing_targets or state.pages >= 2))):
                         state.reason = "TOP reciente con evidencia; presupuesto restante reservado"
@@ -165,7 +208,7 @@ class Engine:
                         choices.append((next_cursor or head_next, True))
                     if missing_targets:
                         choices.extend((h, False) for h in hints)
-                    choices.append((next_cursor or head_next, True))
+                    choices.append((next_cursor or head_next, explore_due))
                     choice = next(((value, explore) for value, explore in choices if value and value not in cursors), None)
                     if not choice and not next_cursor:
                         state.reason = "Fin de la lista disponible; cobertura no garantizada"
@@ -178,8 +221,7 @@ class Engine:
                     state.reason = "Presupuesto de páginas agotado"
             if repeated >= 5:
                 state.pressure = 0.6 * state.pressure + 0.4 * filling / repeated
-            if any(p.profile == "evento" for p in panels) or state.pressure >= 0.2:
-                interval = max(5, interval / 2)
+            # User-configured cadence is a minimum; pressure must not undo a rate reduction.
             state.effective_interval = interval
             state.next_at = max(time.time() + 1, state.last_started + interval + random.uniform(0, 0.5))
         except ProviderError as exc:
@@ -201,7 +243,9 @@ class Engine:
             state.candidates = dict(sorted(
                 ((k, c) for k, c in state.candidates.items() if now - c.observed_at <= 300),
                 key=lambda pair: pair[1].observed_at, reverse=True)[:500])
-            state.page_hints = {j:h for j,h in state.page_hints.items() if j in state.candidates and now-h[1] <= 45}
+            state.page_hints = {j:h for j,h in state.page_hints.items() if j in state.candidates and now-h[1] <= cursor_ttl}
+            relevant_cursors = {h[0] for h in state.page_hints.values()} | {state.explore_cursor}
+            state.cursor_depths = {c:d for c,d in state.cursor_depths.items() if c in relevant_cursors}
             state.watchlist = tuple(c.job_id for c in sorted(
                 (c for c in state.candidates.values() if c.playing <= threshold),
                 key=lambda c: evidence(c, panels[0], c.observed_at).score, reverse=True)[:50])
@@ -231,7 +275,7 @@ class Engine:
         task = self.tasks.get(panel.place_id)
         if not task or task.done():
             # Clicks never bypass error cooldown or the minimum scan interval.
-            state.next_at = max(state.blocked_until, state.last_started + 5)
+            state.next_at = max(state.blocked_until, state.last_started + panel.interval)
         if wait:
             try:
                 async with asyncio.timeout(wait):
@@ -250,11 +294,7 @@ class Engine:
         current = await self.store.get(panel.id)
         if not current or current.state != "active" or current.place_id != panel.place_id:
             return None
-        state = self.states.get(current.place_id)
-        candidate = state.candidates.get(job_id) if state else None
-        if candidate and ranked([candidate], current, time.time()) and time.time() - candidate.observed_at <= 5:
-            return candidate
-        return None
+        return self.entry_candidate(current, job_id)
 
     async def prepare_best(self, panel: Panel) -> Candidate | None:
         """Explicitly choose a fresh candidate; never silently replace a selected JobId."""
@@ -264,4 +304,5 @@ class Engine:
         current = await self.store.get(panel.id)
         if not current or current.state != "active" or current.place_id != panel.place_id:
             return None
-        return next(iter(self.results(replace(current, freshness=min(5, current.freshness)))), None)
+        return next((fresh for c in self.results(current)
+                     if (fresh := self.entry_candidate(current, c.job_id)) is not None), None)

@@ -49,7 +49,7 @@ async def capture(args):
 
 async def replay(rows):
     """Resolve previous predictions before ingesting each snapshot; never use future ranking data."""
-    stores = {mode: Store(":memory:") for mode in ("rapido", "equilibrado", "precision")}
+    stores = {mode: Store(":memory:") for mode in ("rapido", "equilibrado", "precision", "profundo")}
     panels = {mode: Panel(mode, "audit", "audit", "audit", "Audit", profile=mode) for mode in stores}
     candidates = {mode: {} for mode in stores}
     pending = {mode: [] for mode in stores}

@@ -1,0 +1,9 @@
+.env
+.git
+.venv
+data
+dist
+__pycache__
+.pytest_cache
+tests
+.validation-runtime

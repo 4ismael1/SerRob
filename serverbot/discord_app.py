@@ -65,7 +65,8 @@ def panel_embed(panel: Panel, engine: Engine, join_mode: str = "legacy", results
     if state and panel.state == "active":
         details = (f"{state.pages} páginas · {state.scanned} instancias · {state.reobserved} ya conocidas.\n"
                    f"Fase: {state.search_phase} · Mayor profundidad recorrida: {state.max_depth}\n"
-                   f"Watchlist: {len(state.watchlist)} · Baja población: {state.low_count}\n{state.reason}.")
+                   + (f"Grupo en seguimiento: {len(state.focus_jobs)} instancias · Revisiones sin coincidencias: {state.focus_misses}\n" if panel.profile == "profundo" else "")
+                   + f"Watchlist: {len(state.watchlist)} · Baja población: {state.low_count}\n{state.reason}.")
         if state.last_success:
             details += f"\nÚltima respuesta correcta: <t:{int(state.last_success)}:R>."
         if state.error:

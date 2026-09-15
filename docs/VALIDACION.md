@@ -2,6 +2,13 @@
 
 ## Ampliación avanzada
 
+### Corrección de seguimiento sin resultados
+
+- **51 pruebas aprobadas en Python 3.12.10 / Windows.** Una simulación integral con cien instancias por página, una página por ciclo e intervalo de quince segundos obtiene cinco candidatos estables a los noventa segundos de reloj simulado, con siete solicitudes. No es una medición real de Roblox.
+- Se reproduce el empate de candidatos que dejaba las páginas posteriores fuera de las cincuenta referencias prioritarias. El seguimiento utiliza ahora un grupo explícito de hasta diez JobIds de una página.
+- Otra prueba devuelve instancias diferentes en cada respuesta: el grupo se libera tras dos revisiones sin evidencia nueva y continúa el recorrido, sin recomendar resultados no confirmados.
+- La vigencia de profundo sigue limitada a diez segundos: un intervalo de quince puede dejar huecos entre publicaciones. No se ha ampliado para disimular falta de datos ni se promete un plazo real de aparición.
+
 ### Corrección tras errores de entrada reportados
 
 - Ampliación posterior: **49 pruebas** aprobadas en Python 3.12.10 / Windows. Incluyen el perfil profundo, el avance con una página por ciclo y la conservación del cursor de descubrimiento durante seguimiento. Las 47 indicadas a continuación corresponden al paso previo de corrección.

@@ -38,9 +38,11 @@ Se leyó código sin ejecutarlo ni incorporarlo al proyecto:
 
 ### Descubrimiento independiente
 
-Se conserva un cursor de avance que las visitas de seguimiento no sobrescriben. En una ronda de descubrimiento se continúa desde ese cursor; en las otras se revisitan pistas de páginas con candidatos conocidos, alternando entre hasta tres pistas prioritarias. Si no hay pistas, se sigue explorando. La exploración tiene una ronda cada tres ciclos cuando hay seguimiento disponible.
+Se conserva un cursor de avance que las visitas de seguimiento no sobrescriben. Al encontrar baja población en una página profunda, se fija un grupo de hasta diez JobIds y se revisita esa página durante la ventana de confirmación. La primera página solo se toma como grupo si no hay más páginas. El grupo no depende del empate de puntuación entre cientos de candidatos ni del recorte de la watchlist a cincuenta referencias.
 
-Con una página por ciclo, una secuencia posible es **página 1 → página 2 → revisar página 2 → página 3**. No vuelve obligatoriamente a página 1 después de cada consulta. Con dos páginas dispone de más trabajo por ciclo, pero sigue respetando el presupuesto global. La profundidad mostrada es un contador del recorrido de cursores, no una posición absoluta y estable en todos los servidores de Roblox.
+Si dos revisiones seguidas no aportan nuevas observaciones de baja población de ese grupo, se libera y continúa la exploración. Una lectura cacheada con la misma fecha no es nueva evidencia. Los miembros observados sobre el filtro salen del grupo. Una vez transcurridos sesenta segundos desde seleccionar el grupo, se intercala una ronda de descubrimiento cada cinco ciclos; la clasificación sigue exigiendo muestras reales, no solo tiempo transcurrido.
+
+Con una página por ciclo, una secuencia posible es **página 1 → página 2 → revisar página 2 varias veces → página 3**. No vuelve obligatoriamente a página 1 después de cada consulta. Durante la confirmación puede detener el recorrido tras leer el grupo, reservando el resto del presupuesto. La profundidad mostrada es un contador del recorrido de cursores, no una posición absoluta y estable en todos los servidores de Roblox.
 
 Las pistas duran como máximo 120 segundos en profundo. Eso permite intentar reutilizarlas, no garantiza su validez; un cursor rechazado se descarta sin dar por muerto ningún servidor. El resto de perfiles conserva pistas de 45 segundos. Cada recorrido sigue limitado a veinte segundos y al número de páginas configurado.
 

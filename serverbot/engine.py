@@ -35,6 +35,10 @@ class PlaceState:
     max_depth: int = 0
     cursor_depths: dict[str, int] = field(default_factory=dict)
     search_phase: str = "cabecera"
+    focus_cursor: str | None = None
+    focus_jobs: set[str] = field(default_factory=set)
+    focus_started: float = 0
+    focus_misses: int = 0
     incumbents: dict[str, tuple[str, ...]] = field(default_factory=dict)
     watchlist: tuple[str, ...] = ()
     metrics: dict[str, dict] = field(default_factory=dict)
@@ -127,17 +131,17 @@ class Engine:
         hints = sorted(hint_weights, key=hint_weights.get, reverse=True)
         head_next = None
         repeated, filling = 0, 0
-        # A discovery frontier is separate from pages revisited to monitor candidates.
-        # With one page per cycle, this still advances instead of rereading the head forever.
-        exploration_request = deep and explore_due
-        if deep and explore_due and state.explore_cursor and state.last_started - state.explore_at <= cursor_ttl:
-            cursor = state.explore_cursor
-        elif deep and not explore_due and hints:
-            cursor = hints[state.cycles % min(3, len(hints))]
-        elif deep and not hints:
-            exploration_request = True
-            if state.explore_cursor and state.last_started - state.explore_at <= cursor_ttl:
-                cursor = state.explore_cursor
+        # Hold a small cohort through its confirmation window. Ties among hundreds
+        # of provisional candidates must not starve later pages of revisits.
+        exploration_request = False
+        if deep:
+            mature_focus = state.focus_jobs and state.last_started - state.focus_started >= 60
+            exploration_request = not state.focus_jobs or bool(mature_focus and state.cycles % 5 == 0)
+            if exploration_request:
+                if state.explore_cursor and state.last_started - state.explore_at <= cursor_ttl:
+                    cursor = state.explore_cursor
+            else:
+                cursor = state.focus_cursor
         state.search_phase = "exploración profunda" if exploration_request else "seguimiento" if cursor else "cabecera"
         state.cycles += 1
         try:
@@ -150,6 +154,8 @@ class Engine:
                         if cursor and exc.code == "bad_request":
                             # A moved/expired cursor is never a dead-server signal.
                             state.explore_cursor = None
+                            if cursor == state.focus_cursor:
+                                state.focus_jobs.clear()
                             state.page_hints = {j:h for j,h in state.page_hints.items() if h[0] != cursor}
                             state.reason = "Cursor caducado; próximo recorrido desde el inicio"
                             break
@@ -166,6 +172,19 @@ class Engine:
                     state.scanned += len(observations)
                     state.low_count += sum(o.playing <= threshold for o in observations)
                     state.reobserved += sum(o.job_id in before for o in observations)
+                    if deep and state.focus_jobs and cursor == state.focus_cursor:
+                        matches = [o for o in observations if o.job_id in state.focus_jobs]
+                        fresh_matches = [o for o in matches if o.playing <= threshold and
+                                         (o.job_id not in before or o.observed_at > before[o.job_id].observed_at)]
+                        state.focus_misses = 0 if fresh_matches else state.focus_misses + 1
+                        state.focus_jobs.difference_update(o.job_id for o in matches if o.playing > threshold)
+                        if state.focus_misses >= 2:
+                            state.focus_jobs.clear()
+                    elif deep and not state.focus_jobs and (cursor is not None or next_cursor is None):
+                        cohort = [o.job_id for o in observations if o.playing <= threshold and o.playing < o.capacity][:10]
+                        if cohort:
+                            state.focus_cursor, state.focus_jobs = cursor, set(cohort)
+                            state.focus_started, state.focus_misses = time.time(), 0
                     for obs in observations:
                         old = before.get(obs.job_id)
                         if old and 0 < obs.observed_at - old.observed_at <= 45:
@@ -187,6 +206,9 @@ class Engine:
                                  for p in panels)
                     missing_targets = targets - seen
                     if deep:
+                        if state.focus_jobs and not mature_focus:
+                            state.reason = "Confirmando un grupo fijo; próxima lectura en el intervalo configurado"
+                            break
                         # Follow discovery pages only during discovery. Monitoring cannot rewind its frontier.
                         choices = ([next_cursor] if exploration_request else hints + [head_next, None])
                         available = [value for value in choices if value not in cursors and

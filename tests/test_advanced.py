@@ -278,12 +278,65 @@ def test_deep_frontier_advances_with_one_page_and_survives_monitoring(tmp_path, 
                 return [Observation(str(UUID(int=number)), 1, 20, clock[0])], str(number + 1)
         api = API()
         engine = Engine(store, api)
-        for _ in range(4):
+        for _ in range(11):
             await engine.scan("30", [p])
             clock[0] += 10
-        assert api.calls == [None, "2", "2", "3"]
+        assert api.calls[:4] == [None, "2", "2", "2"]
+        assert api.calls[-1] == "3"
         assert engine.states["30"].explore_cursor == "4"
         assert engine.states["30"].max_depth == 3
         assert engine.results(p) == []  # Acquisition progress is not proof of a safe recommendation.
+        await store.close()
+    asyncio.run(run())
+
+
+def test_deep_produces_results_despite_hundred_way_provisional_ties(tmp_path, monkeypatch):
+    async def run():
+        clock = [1000.0]
+        monkeypatch.setattr("serverbot.engine.time.time", lambda: clock[0])
+        store = Store(str(tmp_path / "cohort.db"))
+        await store.initialize()
+        p = panel(profile="profundo", pages=1, interval=15)
+        class API:
+            calls = []
+            async def servers(self, place, cursor):
+                self.calls.append(cursor)
+                base = 0 if cursor is None else int(cursor) * 100
+                return [Observation(str(UUID(int=base+i)), 1, 20, clock[0]) for i in range(1, 101)], str((int(cursor) if cursor else 1) + 1)
+        api = API()
+        engine = Engine(store, api)
+        for _ in range(7):
+            await engine.scan("30", [p])
+            clock[0] += 15
+        # Latest observation was at t=90. Check two seconds later, not after it expired.
+        results = engine.results(p, clock[0] - 13)
+        assert len(results) == 5
+        assert all(evidence(c, p, c.observed_at).span >= 60 for c in results)
+        assert api.calls[:5] == [None, "2", "2", "2", "2"]
+        assert len(api.calls) == 7  # Confirmation did not increase the request budget.
+        await store.close()
+    asyncio.run(run())
+
+
+def test_disappearing_cohort_is_released_without_inventing_confirmation(tmp_path, monkeypatch):
+    async def run():
+        clock = [1000.0]
+        monkeypatch.setattr("serverbot.engine.time.time", lambda: clock[0])
+        store = Store(str(tmp_path / "missing-cohort.db"))
+        await store.initialize()
+        p = panel(profile="profundo", pages=1, interval=15)
+        class API:
+            calls = []
+            async def servers(self, place, cursor):
+                self.calls.append(cursor)
+                return [Observation(str(UUID(int=len(self.calls))), 1, 20, clock[0])], str(len(self.calls)+1)
+        api = API()
+        engine = Engine(store, api)
+        for _ in range(5):
+            await engine.scan("30", [p])
+            clock[0] += 15
+        assert api.calls[:4] == [None, "2", "2", "2"]
+        assert api.calls[4] == "3"
+        assert engine.results(p, clock[0]-13) == []
         await store.close()
     asyncio.run(run())
